@@ -68,6 +68,7 @@ async function handleMetadataInput(
         title: metadata.title || 'Untitled',
         author: metadata.author,
         subject: metadata.subject || 'Uncategorized',
+        category: metadata.category || 'Other',
         exam: metadata.exam,
         year: metadata.year,
         edition: metadata.edition,
@@ -105,7 +106,48 @@ async function handleMetadataInput(
 /**
  * Handle search query
  */
-async function handleSearch(ctx: Context, query: string) {
+// Export this to register in bot.ts
+export async function handleFileCallback(ctx: Context) {
+  const fileId = ctx.callbackQuery?.data?.replace("get_file_", "");
+  if (!fileId) return;
+
+  const { data: file, error } = await supabase
+    .from('files')
+    .select('*')
+    .eq('id', fileId)
+    .single();
+
+  if (error || !file) {
+    await ctx.answerCallbackQuery({ text: "File not found", show_alert: true });
+    return;
+  }
+
+  try {
+    // Build caption
+    let caption = `📄 **${file.title}**\n`;
+    if (file.author) caption += `✍ ${file.author}\n`;
+    if (file.subject) caption += `◈ ${file.subject}`;
+    if (file.exam) caption += ` | 📝 ${file.exam}`;
+    if (file.year) caption += ` | 🗓 ${file.year}`;
+    caption += `\n`;
+    if (file.edition) caption += `📖 ${file.edition}\n`;
+    if (file.semester) caption += `🎓 ${file.semester}\n`;
+
+    await ctx.replyWithDocument(file.telegram_file_id, {
+      caption,
+      parse_mode: "Markdown"
+    });
+    await ctx.answerCallbackQuery();
+  } catch (err) {
+    console.error(`Failed to send file ${file.title}:`, err);
+    await ctx.answerCallbackQuery({ text: "Failed to send file", show_alert: true });
+  }
+}
+
+/**
+ * Handle search query
+ */
+export async function handleSearch(ctx: Context, query: string) {
   const searchTerm = query.trim();
   
   if (searchTerm.length < 2) {
@@ -123,48 +165,34 @@ async function handleSearch(ctx: Context, query: string) {
       .or(
         `title.ilike.%${searchTerm}%,subject.ilike.%${searchTerm}%,author.ilike.%${searchTerm}%,exam.ilike.%${searchTerm}%`
       )
-      .limit(5);
+      .limit(8); // Limit to 8 to fit in screen
 
     if (error) throw error;
 
     if (!searchResults || searchResults.length === 0) {
-      await ctx.reply(`No files found for "${searchTerm}".`);
+      const keyboard = new InlineKeyboard().switchInlineCurrent("🔍 Search Again", searchTerm).row();
+      await ctx.reply(`No files found for "${searchTerm}".`, { reply_markup: keyboard });
       return;
     }
 
-    // Send matching files
-    await ctx.reply(`🗂 **Found ${searchResults.length} matching file(s):**`, { parse_mode: "Markdown" });
-
+    // Construct Keyboard List
+    const keyboard = new InlineKeyboard();
+    
     for (const file of searchResults) {
-      try {
-        // Build caption
-        let caption = `📄 **${file.title}**\n`;
-        if (file.author) caption += `✍ ${file.author}\n`;
-        if (file.subject) caption += `◈ ${file.subject}`;
-        if (file.exam) caption += ` | 📝 ${file.exam}`;
-        if (file.year) caption += ` | 🗓 ${file.year}`;
-        caption += `\n`;
-        if (file.edition) caption += `📖 ${file.edition}\n`;
-        if (file.semester) caption += `🎓 ${file.semester}\n`;
-
-        // Send document using telegram_file_id
-        await ctx.replyWithDocument(file.telegram_file_id, {
-          caption,
-          parse_mode: "Markdown"
-        });
-      } catch (err) {
-        console.error(`Failed to send file ${file.title}:`, err);
-        await ctx.reply(`Could not send "${file.title}" (File may be expired on Telegram servers).`);
-      }
+        // Truncate title if too long
+        let label = file.title || 'Untitled';
+        if (label.length > 30) label = label.substring(0, 27) + '...';
+        if (file.year) label += ` (${file.year})`;
+        
+        keyboard.text(`📄 ${label}`, `get_file_${file.id}`).row();
     }
+    
+    // Add "Other" button
+    keyboard.switchInlineCurrent("🔍 Other / Search Again", searchTerm).row();
 
-    // Add "Other Files" button for inline query
-    const keyboard = new InlineKeyboard().switchInline("🔍 Search All Files", searchTerm);
-
-    await ctx.reply(
-      "Don't see what you're looking for? Try searching all files:",
-      { reply_markup: keyboard }
-    );
+    await ctx.reply(`🗂 **Found ${searchResults.length} matching file(s):**\nSelect a file to download:`, { 
+        reply_markup: keyboard 
+    });
 
   } catch (error) {
     console.error("Search error:", error);

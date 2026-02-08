@@ -33,15 +33,35 @@ export async function handleInlineQuery(ctx: Context) {
     )
     .limit(50);
 
-  const results = (searchResults || []).map(fileToInlineResult);
+  // Maps files to inline results
+  const results: any[] = (searchResults || []).map((file, index) => fileToInlineResult(file, index));
 
-  await ctx.answerInlineQuery(results, { cache_time: 300 });
+  if (query.length > 0) {
+    // Add "Other" result at the end
+    results.push({
+      type: 'article',
+      id: 'other_search',
+      title: '🔍 Other / Search Again',
+      description: `Tap to modify search for "${query}"`,
+      input_message_content: {
+        message_text: `🔎 Showing results for: **${query}**\n\nIf you couldn't find your file, try refining your search or request it.`,
+        parse_mode: 'Markdown'
+      },
+      reply_markup: {
+        inline_keyboard: [[
+            { text: "🔄 Search Again", switch_inline_query_current_chat: query }
+        ]]
+      }
+    });
+  }
+
+  await ctx.answerInlineQuery(results, { cache_time: 10, is_personal: true });
 }
 
 /**
  * Convert a file record to an InlineQueryResult
  */
-function fileToInlineResult(file: any): InlineQueryResultCachedDocument {
+function fileToInlineResult(file: any, index: number): InlineQueryResultCachedDocument {
   // Build description
   let description = '';
   if (file.author) description += `👤 ${file.author} • `;
@@ -49,11 +69,17 @@ function fileToInlineResult(file: any): InlineQueryResultCachedDocument {
   if (file.exam) description += ` • 📝 ${file.exam}`;
   if (file.year) description += ` • ${file.year}`;
 
+  // Add numbering to title for the "list" feel
+  const numParams = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+  const numPrefix = index < 10 ? numParams[index] : `${index + 1}.`;
+
   return {
     type: 'document',
     id: file.id,
-    title: file.title || file.file_name || 'Untitled',
+    title: `${numPrefix} ${file.title || file.file_name || 'Untitled'}`,
     description: description || 'No description',
-    document_file_id: file.telegram_file_id
+    document_file_id: file.telegram_file_id,
+    caption: `📄 **${file.title}**\n${description}`, // Caption for the sent file
+    parse_mode: 'Markdown'
   };
 }

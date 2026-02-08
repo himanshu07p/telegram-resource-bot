@@ -5,6 +5,9 @@ import { isUserAuthenticated, updateUserAuth } from '../lib/supabase';
 // In-memory store for users currently in the login flow (waiting for password)
 const pendingLogins = new Set<number>();
 
+// In-memory store for user sessions (last activity timestamp + has seen instructions)
+export const userSessions = new Map<number, { lastActivity: number; hasSeenInstructions: boolean }>();
+
 export async function authMiddleware(ctx: Context, next: NextFunction) {
   const userId = ctx.from?.id;
   if (!userId) return next();
@@ -12,8 +15,15 @@ export async function authMiddleware(ctx: Context, next: NextFunction) {
   // If user sends /login command
   if (ctx.message?.text === '/login') {
     if (await isUserAuthenticated(userId)) {
-      await ctx.reply("You are already logged in!");
-      return;
+      // Check if session exists or is expired
+      const session = userSessions.get(userId);
+      if (session && Date.now() - session.lastActivity < 10 * 60 * 1000) {
+        await ctx.reply("You are already logged in!");
+        return;
+      }
+      // If expired but DB says yes, force re-login (or just refresh session? User said only 10 min valid)
+      // Actually, let's treat it as expired and proceed to login flow.
+      await updateUserAuth(userId, false);
     }
     pendingLogins.add(userId);
     await ctx.reply("Please enter the bot access password:");
@@ -26,7 +36,9 @@ export async function authMiddleware(ctx: Context, next: NextFunction) {
       // Correct password
       pendingLogins.delete(userId);
       await updateUserAuth(userId, true);
-      await ctx.reply("Login successful! You can now upload documents.");
+      // Initialize session
+      userSessions.set(userId, { lastActivity: Date.now(), hasSeenInstructions: false });
+      await ctx.reply("Login successful! You can now upload documents (Session valid for 10 min).");
     } else {
       // Wrong password
       await ctx.reply("Incorrect password. Please try again or type /login to restart.");
@@ -35,10 +47,23 @@ export async function authMiddleware(ctx: Context, next: NextFunction) {
   }
 
   // Check if user is authenticated for restricted actions (like file uploads)
-  // We'll allow text chat for everyone, but block documents if not logged in.
   if (ctx.message?.document) {
     const isAuthenticated = await isUserAuthenticated(userId);
-    if (!isAuthenticated) {
+    
+    // Check session timeout
+    const session = userSessions.get(userId);
+    if (isAuthenticated) {
+      if (!session || (Date.now() - session.lastActivity > 10 * 60 * 1000)) {
+        // Session expired or missing (e.g. restart)
+        await updateUserAuth(userId, false);
+        userSessions.delete(userId);
+        await ctx.reply("🔒 Session expired due to inactivity. Please /login again.");
+        return;
+      }
+      // Update activity
+      session.lastActivity = Date.now();
+      userSessions.set(userId, session);
+    } else {
       await ctx.reply("🔒 You must login to upload documents. Use /login to authenticate.");
       return;
     }

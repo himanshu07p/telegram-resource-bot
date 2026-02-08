@@ -51,30 +51,30 @@ export async function handleSearch(ctx: Context) {
     }
 
     // 3. Format Response
-    let responseText = `🔎 **Search Results for "${searchTerm}":**\n\n`;
+    await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `🔎 **Search Results for "${searchTerm}":**`, { parse_mode: "Markdown" });
     
     for (const file of uniqueFiles) {
-      responseText += `📄 **${file.title}**\n`;
-      responseText += `   Category: ${file.category} | Subject: ${file.subject}\n`;
-      if (file.year) responseText += `   Year: ${file.year}`;
-      if (file.edition) responseText += ` | Ed: ${file.edition}`;
-      if (file.semester) responseText += ` | Sem: ${file.semester}`;
-      responseText += `\n`;
-      // We need to generate a signed URL or public URL. Assuming bucket is public for read or we generate signed url.
-      // For simplicity, let's assume public bucket or generate signed URL.
-      
-      const { data: signedUrlData } = await supabase.storage
-        .from('documents')
-        .createSignedUrl(file.storage_path, 3600); // 1 hour link
-        
-      if (signedUrlData) {
-        responseText += `   [Download File](${signedUrlData.signedUrl})\n\n`;
-      } else {
-         responseText += `   (Download unavailable)\n\n`;
+      // Build caption
+      let caption = `📄 **${file.title}**\n`;
+      if (file.author) caption += `✍ ${file.author}\n`;
+      if (file.subject) caption += `◈ ${file.subject}`;
+      if (file.exam) caption += ` | 📝 ${file.exam}`;
+      if (file.year) caption += ` | 🗓 ${file.year}`;
+      caption += `\n`;
+      if (file.edition) caption += `📖 ${file.edition}\n`;
+      if (file.semester) caption += `🎓 ${file.semester}\n`;
+
+      try {
+        // Send document using telegram_file_id
+        await ctx.replyWithDocument(file.telegram_file_id, {
+          caption,
+          parse_mode: "Markdown"
+        });
+      } catch (err) {
+        console.error(`Failed to send file ${file.title}:`, err);
+        await ctx.reply(`Could not send "${file.title}" (File may be expired on Telegram servers).`);
       }
     }
-
-    await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, responseText, { parse_mode: "Markdown" });
 
   } catch (error) {
     console.error("Search error:", error);

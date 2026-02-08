@@ -2,6 +2,7 @@ import { Context } from 'grammy';
 import { supabase } from '../lib/supabase';
 import { config } from '../lib/config';
 import { setUserState } from '../lib/state';
+import { userSessions } from '../middleware/auth';
 
 export async function handleFileUpload(ctx: Context) {
   if (!ctx.message || !ctx.message.document) return;
@@ -17,35 +18,13 @@ export async function handleFileUpload(ctx: Context) {
   const statusMsg = await ctx.reply("📄 File received! Saving...");
 
   try {
-    // 1. Get file link
-    const file = await ctx.api.getFile(doc.file_id);
-    if (!file.file_path) throw new Error("Could not get file path");
-    const fileUrl = `https://api.telegram.org/file/bot${config.telegramToken}/${file.file_path}`;
-
-    // 2. Download file
-    const response = await fetch(fileUrl);
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // 3. Upload to Supabase Storage
-    const storagePath = `${userId}/${Date.now()}_${doc.file_name || 'document'}`;
-    
-    const { error: uploadError } = await supabase.storage
-      .from('documents')
-      .upload(storagePath, buffer, {
-        contentType: doc.mime_type || 'application/octet-stream',
-        upsert: false
-      });
-
-    if (uploadError) throw uploadError;
-
     // 4. Create pending database record
     const { data: fileRecord, error: dbError } = await supabase
       .from('files')
       .insert({
         telegram_file_id: doc.file_id,
         file_name: doc.file_name,
-        storage_path: storagePath,
+        storage_path: doc.file_id, // Store Telegram file ID as storage path
         file_size: doc.file_size,
         // Metadata fields will be filled in later
         title: doc.file_name || 'Untitled',
@@ -61,32 +40,33 @@ export async function handleFileUpload(ctx: Context) {
     await setUserState(userId, 'AWAITING_METADATA', fileRecord.id);
 
     // 6. Send metadata format instructions
-    const instructionText = `✨ **File saved!** Now please send the info in this format:
+    const session = userSessions.get(userId);
+    let instructionText = "";
 
-\`\`\`
-name: [Document Name]
-author: [Author Name]
-subject: [Subject]
-exam: [Exam Name]
-year: [Year]
-edition: [Edition]
-semester: [Semester]
-\`\`\`
+    if (session && !session.hasSeenInstructions) {
+      // First time upload in this session - Send FULL instructions
+      session.hasSeenInstructions = true;
+      userSessions.set(userId, session);
 
-**Example:**
-\`\`\`
-name: Concepts of Physics Vol 1
-author: HC Verma
-subject: Physics
-exam: JEE Advanced
-year: 2024
-edition: 5th Edition
-semester: 1st Sem
-\`\`\`
-
-You can skip any field by not including it. Just send the information as plain text.
-
-Type /cancel to cancel this upload.`;
+      instructionText = `✨ **File saved!**\nNow please send the info using one of these formats:\n\n` +
+        `**🍵 Academic Book**\n` +
+        `\`\`\`\nname: [Title]\nauthor: [Author]\nsubject: [Subject]\nyear: [Year]\nedition: [Edition]\n\`\`\`\n\n` +
+        
+        `**✨ Notes**\n` +
+        `\`\`\`\nname: [Title]\nsubject: [Subject]\nsemester: [Semester]\nauthor: [Author]\n\`\`\`\n\n` +
+        
+        `**🎓 PYQ / Exam**\n` +
+        `\`\`\`\nname: [Title]\nsubject: [Subject]\nexam: [Exam Name]\nyear: [Year]\n\`\`\`\n\n` +
+        
+        `**🌙 Book (Novel/Fiction)**\n` +
+        `\`\`\`\nname: [Title]\nauthor: [Author]\ngenre: [Genre]\nyear: [Year]\n\`\`\`\n\n` +
+        
+        `_(Tap to copy & edit. You can skip fields)_` +
+        `\n\nType /cancel to cancel this upload.`;
+    } else {
+      // Subsequent uploads - Short message
+      instructionText = `✨ **File saved!**\nPlease send the metadata (name, author, subject, etc.) or /cancel.`;
+    }
 
     await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, instructionText, { parse_mode: "Markdown" });
 

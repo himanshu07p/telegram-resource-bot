@@ -84,6 +84,7 @@ export function parseMetadataInput(text: string): {
   title?: string;
   author?: string;
   subject?: string;
+  category?: string;
   exam?: string;
   year?: number;
   edition?: string;
@@ -151,6 +152,31 @@ export function parseMetadataInput(text: string): {
       case 'term':
         metadata.semester = value;
         break;
+
+      case 'category':
+      case 'type':
+      case 'cat':
+        metadata.category = value;
+        break;
+      
+      case 'genre':
+        metadata.subject = value; // Keep mapping genre to subject for search
+        metadata.category = 'Book';
+        break;
+    }
+  }
+
+  // Automatic Inference of Category if not provided
+  if (!metadata.category) {
+    if (metadata.exam) {
+      metadata.category = 'PYQs/Exams';
+    } else if (metadata.edition && metadata.author) {
+      metadata.category = 'Academic Book';
+    } else if (metadata.semester) {
+      metadata.category = 'Personal Notes';
+    } else if (metadata.subject && metadata.title) {
+      // Default fallback
+      metadata.category = 'Other'; 
     }
   }
   
