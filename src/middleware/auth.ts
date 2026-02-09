@@ -64,7 +64,8 @@ export async function authMiddleware(ctx: Context, next: NextFunction) {
   }
 
   // Check if user is authenticated for restricted actions (like file uploads)
-  if (ctx.message?.document) {
+  // Skip if this document was sent via inline mode (not an actual user upload)
+  if (ctx.message?.document && !ctx.message.via_bot) {
     const isAuthenticated = await isUserAuthenticated(userId);
     
     // Check session timeout
