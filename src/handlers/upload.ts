@@ -14,6 +14,11 @@ export async function handleFileUpload(ctx: Context) {
     return ctx.reply("❌ Unable to identify user.");
   }
 
+  // Ignore files sent via inline mode (by this bot or others)
+  if (ctx.message?.via_bot) {
+    return;
+  }
+
   // Accept any document type (not just PDF)
   const statusMsg = await ctx.reply("📄 File received! Saving...");
 
