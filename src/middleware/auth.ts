@@ -32,7 +32,24 @@ export async function authMiddleware(ctx: Context, next: NextFunction) {
 
   // If user is pending login (waiting for password)
   if (pendingLogins.has(userId)) {
-    if (ctx.message?.text && config.botPasswords.includes(ctx.message.text)) {
+    const text = ctx.message?.text;
+    
+    if (!text) return; // Ignore non-text updates while waiting for password
+
+    // Allow cancelling
+    if (text === '/cancel') {
+      pendingLogins.delete(userId);
+      await ctx.reply("Login cancelled.");
+      return;
+    }
+
+    // If user sends another command, assume they want to abort login
+    if (text.startsWith('/')) {
+        pendingLogins.delete(userId);
+        return next(); // Process the new command
+    }
+
+    if (config.botPasswords.includes(text)) {
       // Correct password
       pendingLogins.delete(userId);
       await updateUserAuth(userId, true);
@@ -41,9 +58,9 @@ export async function authMiddleware(ctx: Context, next: NextFunction) {
       await ctx.reply("Login successful! You can now upload documents (Session valid for 10 min).");
     } else {
       // Wrong password
-      await ctx.reply("Incorrect password. Please try again or type /login to restart.");
+      await ctx.reply("Incorrect password. Please try again or type /cancel.");
     }
-    return; // Don't pass to other handlers (like chat)
+    return; // Don't pass to other handlers
   }
 
   // Check if user is authenticated for restricted actions (like file uploads)
